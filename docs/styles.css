@@ -8,6 +8,7 @@
   --warn-bg: #fff4e5;
   --warn-fg: #7a4706;
   --card-bg: #f7f7f7;
+  --success-border: #2e7d32;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -21,6 +22,7 @@
     --warn-bg: #332405;
     --warn-fg: #fdedc1;
     --card-bg: #1e1f24;
+    --success-border: #68dfa9;
   }
 }
 
@@ -157,9 +159,11 @@ h2 { font-size: 1.1rem; margin-bottom: 0.75rem; }
   border-radius: 8px;
   padding: 0.5rem 0.6rem;
   margin-bottom: 0.5rem;
+  transition: border-color 0.2s ease;
 }
 
 .plan-row.excluded { opacity: 0.5; }
+.plan-row.just-saved { border-color: var(--success-border); }
 
 .plan-row input[type="checkbox"] {
   margin-top: 0.5rem;

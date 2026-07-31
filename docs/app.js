@@ -105,6 +105,11 @@ function showTransientError(text) {
   setTimeout(() => banner.remove(), 5000);
 }
 
+function flashSaved(el) {
+  el.classList.add('just-saved');
+  setTimeout(() => el.classList.remove('just-saved'), 900);
+}
+
 function daysBetween(dateStr) {
   if (!dateStr) return null;
   const then = new Date(dateStr);
@@ -272,7 +277,7 @@ function renderPlanRow(row) {
   wrap.appendChild(deleteBtn);
 
   async function saveRow() {
-    await upsertPlanRow({
+    const result = await upsertPlanRow({
       id: row.id,
       source_item_id: row.source_item_id || '',
       title: titleInput.value,
@@ -284,6 +289,7 @@ function renderPlanRow(row) {
       notes: notesInput.value,
       status: row.status || 'proposed'
     });
+    if (result.ok) flashSaved(wrap);
   }
 
   return wrap;

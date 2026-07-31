@@ -25,18 +25,36 @@
 
   <div id="banner-area"></div>
 
-  <main>
-    <section id="pending-plan-section">
-      <h2>Today's Plan (pending)</h2>
-      <div id="pending-plan-rows"></div>
-      <button id="add-block-btn" type="button">+ Add block</button>
-    </section>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-block">
+        <h2>Life Areas</h2>
+        <div id="area-filters" class="filter-list"></div>
+      </div>
 
-    <section id="status-section">
-      <h2>Status</h2>
-      <div id="status-groups"></div>
-    </section>
-  </main>
+      <div class="sidebar-block">
+        <h2>At a Glance</h2>
+        <div id="glance-stats" class="glance-stats"></div>
+      </div>
+    </aside>
+
+    <main class="main-col">
+      <section id="pending-plan-section" class="panel">
+        <div class="panel-header">
+          <h2>Today's Plan <span class="muted">(pending)</span></h2>
+        </div>
+        <div id="pending-plan-rows"></div>
+        <button id="add-block-btn" type="button">+ Add block</button>
+      </section>
+
+      <section id="status-section" class="panel">
+        <div class="panel-header">
+          <h2>Status</h2>
+        </div>
+        <div id="status-groups"></div>
+      </section>
+    </main>
+  </div>
 </div>
 
 <script src="app.js"></script>

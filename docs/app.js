@@ -14,6 +14,11 @@ const bannerArea = document.getElementById('banner-area');
 const statusGroups = document.getElementById('status-groups');
 const planRows = document.getElementById('pending-plan-rows');
 const addBlockBtn = document.getElementById('add-block-btn');
+const areaFilters = document.getElementById('area-filters');
+const glanceStats = document.getElementById('glance-stats');
+
+let currentAreaFilter = 'all';
+let lastReportingItems = [];
 
 gateForm.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -158,9 +163,17 @@ function makeBanner(kind, text) {
 }
 
 function renderGroups(items) {
+  lastReportingItems = items;
+  renderAreaFilters(items);
+  renderGlanceStats(items);
+
   statusGroups.innerHTML = '';
+  const visible = currentAreaFilter === 'all'
+    ? items
+    : items.filter((it) => (it.life_area || 'other') === currentAreaFilter);
+
   const byArea = {};
-  items.forEach((it) => {
+  visible.forEach((it) => {
     const area = it.life_area || 'other';
     if (!byArea[area]) byArea[area] = [];
     byArea[area].push(it);
@@ -168,43 +181,131 @@ function renderGroups(items) {
 
   Object.keys(byArea).sort().forEach((area) => {
     const group = document.createElement('div');
-    group.className = 'group';
+    group.className = 'status-group';
 
     const title = document.createElement('div');
-    title.className = 'group-title';
+    title.className = 'status-group-title';
     title.textContent = area;
     group.appendChild(title);
 
-    byArea[area].forEach((it) => group.appendChild(renderItemCard(it)));
+    byArea[area].forEach((it) => group.appendChild(renderStatusRow(it)));
     statusGroups.appendChild(group);
   });
 }
 
-function renderItemCard(it) {
-  const card = document.createElement('div');
-  card.className = 'item-card';
+function renderAreaFilters(items) {
+  const counts = { all: items.length };
+  items.forEach((it) => {
+    const area = it.life_area || 'other';
+    counts[area] = (counts[area] || 0) + 1;
+  });
+
+  const areas = ['all', ...Object.keys(counts).filter((a) => a !== 'all').sort()];
+
+  areaFilters.innerHTML = '';
+  areas.forEach((area) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'filter-btn' + (area === currentAreaFilter ? ' active' : '');
+
+    const label = document.createElement('span');
+    label.textContent = area === 'all' ? 'All' : area;
+    const count = document.createElement('span');
+    count.className = 'count';
+    count.textContent = counts[area];
+
+    btn.appendChild(label);
+    btn.appendChild(count);
+    btn.addEventListener('click', () => {
+      currentAreaFilter = area;
+      renderGroups(lastReportingItems);
+    });
+    areaFilters.appendChild(btn);
+  });
+}
+
+function renderGlanceStats(items) {
+  const overdueCount = items.filter((it) => {
+    const days = daysBetween(it.due_date);
+    return it.flexibility === 'fixed' && it.status !== 'complete' && days !== null && days > 0;
+  }).length;
+
+  const staleCount = items.filter((it) => {
+    const days = daysBetween(it.last_updated);
+    return it.type === 'pipeline' && days !== null && days > 14;
+  }).length;
+
+  const stats = [
+    ['Overdue (fixed)', overdueCount],
+    ['Stale pipeline', staleCount],
+    ['Total tracked', items.length]
+  ];
+
+  glanceStats.innerHTML = '';
+  stats.forEach(([label, num]) => {
+    const row = document.createElement('div');
+    row.className = 'glance-stat';
+    const l = document.createElement('span');
+    l.textContent = label;
+    const n = document.createElement('span');
+    n.className = 'num';
+    n.textContent = num;
+    row.appendChild(l);
+    row.appendChild(n);
+    glanceStats.appendChild(row);
+  });
+}
+
+function renderStatusRow(it) {
+  const row = document.createElement('div');
+  row.className = 'status-row';
 
   const title = document.createElement('div');
-  title.className = 'item-title';
+  title.className = 'row-title';
   title.textContent = it.title;
+
+  const pills = document.createElement('div');
+  pills.className = 'row-pills';
 
   const overdueDays = daysBetween(it.due_date);
   if (it.due_date && it.status !== 'complete' && overdueDays > 0) {
-    const tag = document.createElement('span');
-    tag.className = 'tag overdue';
-    tag.textContent = 'overdue';
-    title.appendChild(tag);
+    pills.appendChild(makePill('pink', 'overdue'));
   }
+  if (it.status) pills.appendChild(makePill(statusPillColor(it.status), it.status));
+  if (it.type) pills.appendChild(makePill(typePillColor(it.type), it.type));
+  if (it.priority) pills.appendChild(makePill(priorityPillColor(it.priority), it.priority));
+  if (it.due_date) pills.appendChild(makePill('gray', `due ${it.due_date}`));
 
-  const meta = document.createElement('div');
-  meta.className = 'item-meta';
-  const bits = [it.type, it.status, it.due_date ? `due ${it.due_date}` : null, it.priority]
-    .filter(Boolean);
-  meta.textContent = bits.join(' · ');
+  row.appendChild(title);
+  row.appendChild(pills);
+  return row;
+}
 
-  card.appendChild(title);
-  card.appendChild(meta);
-  return card;
+function makePill(color, text) {
+  const span = document.createElement('span');
+  span.className = `pill pill-${color}`;
+  span.textContent = text;
+  return span;
+}
+
+function statusPillColor(status) {
+  if (status === 'complete') return 'green';
+  if (status === 'in progress' || status === 'Started') return 'blue';
+  if (status === 'blocked') return 'pink';
+  return 'peach';
+}
+
+function typePillColor(type) {
+  if (type === 'habit') return 'green';
+  if (type === 'pipeline') return 'purple';
+  if (type === 'constraint') return 'pink';
+  return 'blue';
+}
+
+function priorityPillColor(priority) {
+  if (priority === 'high') return 'pink';
+  if (priority === 'medium') return 'blue';
+  return 'gray';
 }
 
 // --- PendingPlan (editable) ---

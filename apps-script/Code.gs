@@ -1,27 +1,130 @@
 // Bound to the Reporting Sheet. Deploy as a web app (Execute as: Me, Access: Anyone).
 // Set Script Properties (Project Settings > Script Properties) before deploying:
-//   DASHBOARD_SECRET  - the password the dashboard must pass as ?key=... on every request
+//   DASHBOARD_SECRET  - the password the dashboard/chat/Routine must pass as ?key=... (GET)
+//                        or in the JSON body (POST) on every request
 
 var REPORTING_SHEET_NAME = 'Reporting';
+var PENDING_PLAN_SHEET_NAME = 'PendingPlan';
+var PENDING_PLAN_HEADERS = [
+  'id', 'source_item_id', 'title', 'date', 'start_time', 'duration_minutes',
+  'block_type', 'include', 'notes', 'status', 'calendar_event_id', 'last_modified'
+];
 
 function doGet(e) {
   var params = e.parameter;
-  var secret = PropertiesService.getScriptProperties().getProperty('DASHBOARD_SECRET');
-
-  if (!secret || params.key !== secret) {
+  if (!checkSecret(params.key)) {
     return jsonResponse({ error: 'unauthorized' });
   }
 
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(REPORTING_SHEET_NAME);
-  if (!sheet) {
-    return jsonResponse({ error: 'sheet not found: ' + REPORTING_SHEET_NAME });
+  var resource = params.resource || 'reporting';
+
+  if (resource === 'reporting') {
+    var reportingSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(REPORTING_SHEET_NAME);
+    if (!reportingSheet) {
+      return jsonResponse({ error: 'sheet not found: ' + REPORTING_SHEET_NAME });
+    }
+    return jsonResponse({ items: sheetToObjects(reportingSheet) });
   }
 
-  return jsonResponse({ items: sheetToObjects(sheet) });
+  if (resource === 'pendingplan') {
+    var planSheet = getOrCreatePendingPlanSheet();
+    return jsonResponse({ items: sheetToObjects(planSheet) });
+  }
+
+  return jsonResponse({ error: 'unknown resource: ' + resource });
 }
+
+function doPost(e) {
+  var body;
+  try {
+    body = JSON.parse(e.postData.contents);
+  } catch (err) {
+    return jsonResponse({ error: 'invalid JSON body' });
+  }
+
+  if (!checkSecret(body.key)) {
+    return jsonResponse({ error: 'unauthorized' });
+  }
+
+  if (body.action === 'pendingplan_upsert') {
+    return pendingPlanUpsert(body.row || {});
+  }
+
+  if (body.action === 'pendingplan_delete') {
+    return pendingPlanDelete(body.id);
+  }
+
+  return jsonResponse({ error: 'unknown action: ' + body.action });
+}
+
+function checkSecret(candidate) {
+  var secret = PropertiesService.getScriptProperties().getProperty('DASHBOARD_SECRET');
+  return !!secret && candidate === secret;
+}
+
+// --- PendingPlan ---
+
+function getOrCreatePendingPlanSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(PENDING_PLAN_SHEET_NAME);
+  if (!sheet) {
+    sheet = ss.insertSheet(PENDING_PLAN_SHEET_NAME);
+    sheet.appendRow(PENDING_PLAN_HEADERS);
+  }
+  return sheet;
+}
+
+// Creates a new row if row.id is blank or not found, otherwise updates the matching row in place.
+function pendingPlanUpsert(row) {
+  var sheet = getOrCreatePendingPlanSheet();
+  var values = sheet.getDataRange().getValues();
+  var headers = values[0];
+  var idCol = headers.indexOf('id');
+
+  row.last_modified = new Date().toISOString();
+  if (!row.id) {
+    row.id = 'PP' + new Date().getTime();
+  }
+
+  for (var r = 1; r < values.length; r++) {
+    if (values[r][idCol] === row.id) {
+      var rowNum = r + 1;
+      headers.forEach(function (header, c) {
+        if (row.hasOwnProperty(header)) {
+          sheet.getRange(rowNum, c + 1).setValue(row[header]);
+        }
+      });
+      return jsonResponse({ ok: true, id: row.id, created: false });
+    }
+  }
+
+  var newRow = headers.map(function (header) {
+    return row.hasOwnProperty(header) ? row[header] : '';
+  });
+  sheet.appendRow(newRow);
+  return jsonResponse({ ok: true, id: row.id, created: true });
+}
+
+function pendingPlanDelete(id) {
+  if (!id) return jsonResponse({ error: 'missing id' });
+  var sheet = getOrCreatePendingPlanSheet();
+  var values = sheet.getDataRange().getValues();
+  var idCol = values[0].indexOf('id');
+
+  for (var r = 1; r < values.length; r++) {
+    if (values[r][idCol] === id) {
+      sheet.deleteRow(r + 1);
+      return jsonResponse({ ok: true, id: id });
+    }
+  }
+  return jsonResponse({ error: 'id not found: ' + id });
+}
+
+// --- shared helpers ---
 
 function sheetToObjects(sheet) {
   var values = sheet.getDataRange().getValues();
+  if (values.length < 2) return [];
   var headers = values[0];
   return values.slice(1)
     .filter(function (row) { return row[0] !== ''; })

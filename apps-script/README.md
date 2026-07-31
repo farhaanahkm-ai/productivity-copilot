@@ -28,13 +28,13 @@ Editing and saving `Code.gs` in the editor is not enough — the live URL keeps 
 **GET** `?key=<secret>&resource=pendingplan`
 → `{ items: [...] }` — every row of the PendingPlan tab (auto-created on first use if it doesn't exist yet, no manual setup needed).
 
-**POST** body `{ "key": "<secret>", "action": "pendingplan_upsert", "row": { "id": "...", "title": "...", ... } }`
+**GET** `?key=<secret>&action=pendingplan_upsert&row=<URL-encoded JSON, e.g. {"id":"...","title":"...",...}>`
 → Creates a new PendingPlan row if `row.id` is blank/unmatched, otherwise updates the matching row in place. `last_modified` is set server-side automatically.
 
-**POST** body `{ "key": "<secret>", "action": "pendingplan_delete", "id": "PP..." }`
+**GET** `?key=<secret>&action=pendingplan_delete&id=PP...`
 → Removes that row from PendingPlan.
 
-To avoid a CORS preflight from GitHub Pages, send POST requests with `Content-Type: text/plain` (Apps Script still parses the body as JSON via `e.postData.contents`) — see `docs/app.js`.
+All writes go through GET, not POST — Apps Script's `/exec` URL always 302-redirects to a `googleusercontent.com` URL for the actual response, and per the fetch spec, browsers silently rewrite a POST into a bodyless GET on that kind of redirect. A `doPost` handler would simply never be reached with its body intact when called from client-side `fetch()`. Encoding writes as GET query params (like reads already do) sidesteps the problem entirely, at the cost of a URL length ceiling — fine for planning-block-sized data, would become a real constraint for anything larger.
 
 ### PendingPlan columns
 `id, source_item_id, title, date, start_time, duration_minutes, block_type, include, notes, status, calendar_event_id, last_modified`

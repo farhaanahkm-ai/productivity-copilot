@@ -70,21 +70,39 @@ async function fetchResource(key, resource) {
   }
 }
 
-// Content-Type: text/plain avoids a CORS preflight against the Apps Script endpoint.
-async function postAction(payload) {
-  return fetch(API_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify(Object.assign({ key: secret }, payload))
-  });
+// Writes go through GET too, not POST — see apps-script/README.md for why
+// (Apps Script's redirect makes a client-side POST arrive as a bodyless GET).
+async function performAction(action, extraParams) {
+  const url = new URL(API_URL);
+  url.searchParams.set('key', secret);
+  url.searchParams.set('action', action);
+  Object.entries(extraParams || {}).forEach(([k, v]) => url.searchParams.set(k, v));
+  try {
+    const res = await fetch(url.toString());
+    const data = await res.json();
+    if (data.error) {
+      showTransientError(`Save failed: ${data.error}`);
+      return { ok: false };
+    }
+    return { ok: true, data };
+  } catch (err) {
+    showTransientError('Save failed: could not reach the server.');
+    return { ok: false };
+  }
 }
 
 async function upsertPlanRow(row) {
-  return postAction({ action: 'pendingplan_upsert', row });
+  return performAction('pendingplan_upsert', { row: JSON.stringify(row) });
 }
 
 async function deletePlanRow(id) {
-  return postAction({ action: 'pendingplan_delete', id });
+  return performAction('pendingplan_delete', { id });
+}
+
+function showTransientError(text) {
+  const banner = makeBanner('danger', text);
+  bannerArea.prepend(banner);
+  setTimeout(() => banner.remove(), 5000);
 }
 
 function daysBetween(dateStr) {

@@ -10,10 +10,32 @@ var PENDING_PLAN_HEADERS = [
   'block_type', 'include', 'notes', 'status', 'calendar_event_id', 'last_modified'
 ];
 
+// Everything goes through doGet, including writes. Apps Script's /exec URL always
+// 302-redirects to a googleusercontent.com URL for the real response, and per the
+// fetch spec, browsers silently rewrite a POST into a bodyless GET on that kind of
+// redirect. doPost calls from client-side fetch() therefore never actually reach
+// doPost — they arrive here anyway, minus their body. So writes take their payload
+// as URL-encoded query params instead, same as reads.
 function doGet(e) {
   var params = e.parameter;
   if (!checkSecret(params.key)) {
     return jsonResponse({ error: 'unauthorized' });
+  }
+
+  var action = params.action;
+
+  if (action === 'pendingplan_upsert') {
+    var row;
+    try {
+      row = JSON.parse(params.row || '{}');
+    } catch (err) {
+      return jsonResponse({ error: 'invalid row JSON' });
+    }
+    return pendingPlanUpsert(row);
+  }
+
+  if (action === 'pendingplan_delete') {
+    return pendingPlanDelete(params.id);
   }
 
   var resource = params.resource || 'reporting';
@@ -32,29 +54,6 @@ function doGet(e) {
   }
 
   return jsonResponse({ error: 'unknown resource: ' + resource });
-}
-
-function doPost(e) {
-  var body;
-  try {
-    body = JSON.parse(e.postData.contents);
-  } catch (err) {
-    return jsonResponse({ error: 'invalid JSON body' });
-  }
-
-  if (!checkSecret(body.key)) {
-    return jsonResponse({ error: 'unauthorized' });
-  }
-
-  if (body.action === 'pendingplan_upsert') {
-    return pendingPlanUpsert(body.row || {});
-  }
-
-  if (body.action === 'pendingplan_delete') {
-    return pendingPlanDelete(body.id);
-  }
-
-  return jsonResponse({ error: 'unknown action: ' + body.action });
 }
 
 function checkSecret(candidate) {

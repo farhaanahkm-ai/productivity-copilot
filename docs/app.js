@@ -18,10 +18,17 @@ const addBlockBtn = document.getElementById('add-block-btn');
 const areaFilters = document.getElementById('area-filters');
 const glanceStats = document.getElementById('glance-stats');
 const timelineRows = document.getElementById('timeline-rows');
+const timelineHeader = document.getElementById('timeline-header');
+const timelineLegend = document.getElementById('timeline-legend');
 
 let currentAreaFilter = 'all';
 let lastReportingItems = [];
-const expandedAreas = new Set();
+let lastPlanItems = [];
+const expandedGroups = new Set();
+
+function genId(prefix) {
+  return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
 
 gateForm.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -42,22 +49,21 @@ refreshBtn.addEventListener('click', () => {
   if (secret) loadAll(secret);
 });
 
+// "+ Add block" now creates a new task directly in the Master Task List
+// (Reporting sheet), not a scratch PendingPlan row — Today's Plan is populated
+// exclusively by dragging existing tasks in.
 addBlockBtn.addEventListener('click', async () => {
-  const today = new Date().toISOString().slice(0, 10);
-  await upsertPlanRow({
-    title: '',
-    date: today,
-    start_time: '',
-    duration_minutes: '',
-    block_type: 'flexible',
-    include: true,
-    notes: '',
-    status: 'proposed'
-  });
-  loadAll(secret);
+  const result = await performAction('reporting_create', { fields: JSON.stringify({ life_area: 'other' }) });
+  if (result.ok) {
+    expandedGroups.add('Other');
+    loadAll(secret);
+  }
 });
 
-// Drag-and-drop: a Status row dropped onto Today's Plan becomes a new pending block.
+// Drag-and-drop: a Master Task List row dropped onto Today's Plan becomes a
+// scheduling entry linked back to that task (source_item_id), not a copy of its
+// content. Only one such entry per task is allowed — dropping the same task again
+// just flashes the existing tile instead of duplicating it.
 planRows.addEventListener('dragover', (e) => {
   e.preventDefault();
   planRows.classList.add('drag-over');
@@ -68,27 +74,49 @@ planRows.addEventListener('dragleave', () => {
 planRows.addEventListener('drop', async (e) => {
   e.preventDefault();
   planRows.classList.remove('drag-over');
-  let data;
-  try {
-    data = JSON.parse(e.dataTransfer.getData('application/json'));
-  } catch (err) {
+
+  const sourceId = e.dataTransfer.getData('text/plain');
+  if (!sourceId) return;
+
+  const existing = lastPlanItems.find((p) => p.source_item_id === sourceId);
+  if (existing) {
+    const el = planRows.querySelector(`[data-plan-id="${cssEscape(existing.id)}"]`);
+    if (el) flashSaved(el);
     return;
   }
+
+  const sourceItem = lastReportingItems.find((it) => it.id === sourceId);
+  if (!sourceItem) return;
+
   const today = new Date().toISOString().slice(0, 10);
-  const blockType = data.flexibility === 'fixed' ? 'fixed' : (data.type === 'habit' ? 'habit' : 'flexible');
-  await upsertPlanRow({
-    source_item_id: data.id || '',
-    title: data.title || '',
+  const newRow = {
+    id: genId('PP'),
+    source_item_id: sourceId,
+    title: sourceItem.title,
     date: today,
     start_time: '',
     duration_minutes: '',
-    block_type: blockType,
+    block_type: sourceItem.flexibility === 'fixed' ? 'fixed' : (sourceItem.type === 'habit' ? 'habit' : 'flexible'),
     include: true,
     notes: '',
     status: 'proposed'
-  });
-  loadAll(secret);
+  };
+
+  // Optimistic: render immediately, sync to the sheet in the background — dragging
+  // used to feel laggy because we awaited a full reload before anything appeared.
+  lastPlanItems = lastPlanItems.concat([newRow]);
+  renderPlan(lastPlanItems);
+
+  const result = await upsertPlanRow(newRow);
+  if (!result.ok) {
+    lastPlanItems = lastPlanItems.filter((p) => p.id !== newRow.id);
+    renderPlan(lastPlanItems);
+  }
 });
+
+function cssEscape(str) {
+  return String(str).replace(/["\\]/g, '\\$&');
+}
 
 async function loadAll(key) {
   const [reporting, plan] = await Promise.all([
@@ -122,12 +150,12 @@ async function performAction(action, extraParams) {
     const res = await fetch(url.toString());
     const data = await res.json();
     if (data.error) {
-      showTransientError(`Save failed: ${data.error}`);
+      showTransientNotice(`Save failed: ${data.error}`, 'danger');
       return { ok: false };
     }
     return { ok: true, data };
   } catch (err) {
-    showTransientError('Save failed: could not reach the server.');
+    showTransientNotice('Save failed: could not reach the server.', 'danger');
     return { ok: false };
   }
 }
@@ -144,10 +172,10 @@ async function updateReportingField(id, fields) {
   return performAction('reporting_update', { id, fields: JSON.stringify(fields) });
 }
 
-function showTransientError(text) {
-  const banner = makeBanner('danger', text);
+function showTransientNotice(text, kind) {
+  const banner = makeBanner(kind || 'warn', text);
   bannerArea.prepend(banner);
-  setTimeout(() => banner.remove(), 5000);
+  setTimeout(() => banner.remove(), 4000);
 }
 
 function flashSaved(el) {
@@ -181,6 +209,8 @@ function toDateInputValue(dateStr) {
 }
 
 function render(items, planItems) {
+  lastReportingItems = items;
+  lastPlanItems = planItems;
   renderBanners(items);
   renderGroups(items);
   renderPlan(planItems);
@@ -222,8 +252,9 @@ function makeBanner(kind, text) {
   return div;
 }
 
+// Grouped by project (Reporting `parent` field) — items with no parent
+// (habits, constraints, ad-hoc tasks) fall into an "Other" bucket.
 function renderGroups(items) {
-  lastReportingItems = items;
   renderAreaFilters(items);
   renderGlanceStats(items);
 
@@ -232,23 +263,23 @@ function renderGroups(items) {
     ? items
     : items.filter((it) => (it.life_area || 'other') === currentAreaFilter);
 
-  const byArea = {};
+  const byProject = {};
   visible.forEach((it) => {
-    const area = it.life_area || 'other';
-    if (!byArea[area]) byArea[area] = [];
-    byArea[area].push(it);
+    const project = it.parent || 'Other';
+    if (!byProject[project]) byProject[project] = [];
+    byProject[project].push(it);
   });
 
-  Object.keys(byArea).sort().forEach((area) => {
+  Object.keys(byProject).sort().forEach((project) => {
     const group = document.createElement('div');
     group.className = 'status-group';
 
     const title = document.createElement('div');
     title.className = 'status-group-title';
-    title.textContent = area;
+    title.textContent = project;
     group.appendChild(title);
 
-    const sorted = byArea[area].slice().sort((a, b) => {
+    const sorted = byProject[project].slice().sort((a, b) => {
       const da = new Date(a.due_date);
       const db = new Date(b.due_date);
       const va = isNaN(da) ? Infinity : da.getTime();
@@ -256,7 +287,7 @@ function renderGroups(items) {
       return va - vb;
     });
 
-    const expanded = expandedAreas.has(area);
+    const expanded = expandedGroups.has(project);
     const visibleRows = expanded ? sorted : sorted.slice(0, STATUS_PAGE_SIZE);
     visibleRows.forEach((it) => group.appendChild(renderStatusRow(it)));
 
@@ -266,7 +297,7 @@ function renderGroups(items) {
       more.className = 'show-more-btn';
       more.textContent = expanded ? 'Show less' : `Show ${sorted.length - STATUS_PAGE_SIZE} more`;
       more.addEventListener('click', () => {
-        if (expanded) expandedAreas.delete(area); else expandedAreas.add(area);
+        if (expanded) expandedGroups.delete(project); else expandedGroups.add(project);
         renderGroups(lastReportingItems);
       });
       group.appendChild(more);
@@ -341,6 +372,9 @@ function renderGlanceStats(items) {
 
 const STATUS_OPTIONS = ['not started', 'in progress', 'blocked', 'complete'];
 const PRIORITY_OPTIONS = ['high', 'medium', 'low'];
+const LIFE_AREA_OPTIONS = ['career', 'personal', 'health', 'other'];
+const FLEXIBILITY_OPTIONS = ['fixed', 'flexible', 'protected'];
+const DRAG_BLOCKED_TAGS = ['INPUT', 'SELECT', 'TEXTAREA'];
 
 // Some source rows use "Started"/"Not started" instead of the schema's lowercase
 // enum — normalize for display so the dropdown is always usable. The underlying
@@ -356,19 +390,34 @@ function renderStatusRow(it) {
   const row = document.createElement('div');
   row.className = 'status-row';
   row.draggable = true;
+  row.dataset.id = it.id;
 
   row.addEventListener('dragstart', (e) => {
+    // Let clicks on form fields behave normally instead of starting a drag.
+    if (DRAG_BLOCKED_TAGS.includes(e.target.tagName)) {
+      e.preventDefault();
+      return;
+    }
     e.dataTransfer.effectAllowed = 'copy';
-    e.dataTransfer.setData('application/json', JSON.stringify({
-      id: it.id, title: it.title, type: it.type, flexibility: it.flexibility, life_area: it.life_area
-    }));
+    e.dataTransfer.setData('text/plain', it.id);
     row.classList.add('dragging');
   });
   row.addEventListener('dragend', () => row.classList.remove('dragging'));
 
-  const title = document.createElement('div');
-  title.className = 'row-title';
-  title.textContent = it.title;
+  const handle = document.createElement('span');
+  handle.className = 'drag-handle';
+  handle.textContent = '⠿';
+  handle.title = 'Drag to Today\'s Plan';
+
+  const body = document.createElement('div');
+  body.className = 'row-body';
+
+  const titleInput = document.createElement('input');
+  titleInput.type = 'text';
+  titleInput.className = 'row-title-input';
+  titleInput.value = it.title || '';
+  titleInput.addEventListener('change', () => saveField(row, it.id, { title: titleInput.value }));
+  body.appendChild(titleInput);
 
   const pills = document.createElement('div');
   pills.className = 'row-pills';
@@ -380,6 +429,11 @@ function renderStatusRow(it) {
 
   if (it.type) pills.appendChild(makePill(typePillColor(it.type), it.type));
 
+  const normalizedArea = LIFE_AREA_OPTIONS.includes(it.life_area) ? it.life_area : 'other';
+  pills.appendChild(makeEditableSelect(LIFE_AREA_OPTIONS, normalizedArea, () => 'gray', (val) => {
+    saveField(row, it.id, { life_area: val });
+  }));
+
   pills.appendChild(makeEditableSelect(STATUS_OPTIONS, normalizeStatus(it.status), statusPillColor, (val) => {
     saveField(row, it.id, { status: val });
   }));
@@ -389,19 +443,32 @@ function renderStatusRow(it) {
     saveField(row, it.id, { priority: val });
   }));
 
-  if (it.due_date) {
-    const dateInput = document.createElement('input');
-    dateInput.type = 'date';
-    dateInput.className = 'pill-date pill-gray';
-    dateInput.value = toDateInputValue(it.due_date);
-    dateInput.addEventListener('change', () => {
-      saveField(row, it.id, { due_date: dateInput.value });
-    });
-    pills.appendChild(dateInput);
-  }
+  const normalizedFlex = FLEXIBILITY_OPTIONS.includes(it.flexibility) ? it.flexibility : 'flexible';
+  pills.appendChild(makeEditableSelect(FLEXIBILITY_OPTIONS, normalizedFlex, () => 'gray', (val) => {
+    saveField(row, it.id, { flexibility: val });
+  }));
 
-  row.appendChild(title);
-  row.appendChild(pills);
+  const dateInput = document.createElement('input');
+  dateInput.type = 'date';
+  dateInput.className = 'pill-date pill-gray';
+  dateInput.value = toDateInputValue(it.due_date);
+  dateInput.addEventListener('change', () => {
+    saveField(row, it.id, { due_date: dateInput.value });
+  });
+  pills.appendChild(dateInput);
+
+  body.appendChild(pills);
+
+  const nextStepsInput = document.createElement('input');
+  nextStepsInput.type = 'text';
+  nextStepsInput.className = 'next-steps-input';
+  nextStepsInput.placeholder = 'Next step...';
+  nextStepsInput.value = it.next_steps || '';
+  nextStepsInput.addEventListener('change', () => saveField(row, it.id, { next_steps: nextStepsInput.value }));
+  body.appendChild(nextStepsInput);
+
+  row.appendChild(handle);
+  row.appendChild(body);
   return row;
 }
 
@@ -410,7 +477,7 @@ async function saveField(rowEl, id, fields) {
   if (result.ok) {
     flashSaved(rowEl);
     // Delayed so the save flash is visible before the full reload replaces this row
-    // (banners/glance stats/overdue status can all shift based on this edit).
+    // (banners/glance stats/overdue status/grouping can all shift based on this edit).
     setTimeout(() => loadAll(secret), 900);
   }
 }
@@ -425,7 +492,6 @@ function makeEditableSelect(options, current, colorFn, onChange) {
     if (opt === current) o.selected = true;
     select.appendChild(o);
   });
-  select.addEventListener('click', (e) => e.stopPropagation());
   select.addEventListener('change', () => {
     select.className = `pill-select pill-${colorFn(select.value)}`;
     onChange(select.value);
@@ -462,8 +528,12 @@ function priorityPillColor(priority) {
 
 // --- Timeline (plotted by due_date; true start/end bars would need a start_date column) ---
 
+const TIMELINE_STATUS_LEGEND = ['not started', 'in progress', 'blocked', 'complete'];
+
 function renderTimeline(items) {
   timelineRows.innerHTML = '';
+  timelineHeader.innerHTML = '';
+  renderTimelineLegend();
 
   const withDates = items.filter((it) => it.parent && !isNaN(new Date(it.due_date)));
   if (withDates.length === 0) {
@@ -479,6 +549,8 @@ function renderTimeline(items) {
   const max = Math.max(...times);
   const span = Math.max(max - min, 1);
   const today = Date.now();
+
+  renderTimelineHeader(min, max, span, today);
 
   const byProject = {};
   withDates.forEach((it) => {
@@ -510,8 +582,8 @@ function renderTimeline(items) {
       const marker = document.createElement('div');
       marker.className = 'timeline-marker';
       marker.style.left = `${((new Date(it.due_date).getTime() - min) / span) * 100}%`;
-      marker.style.background = `var(--pill-${typePillColor(it.type)}-fg)`;
-      marker.title = `${it.title} — due ${formatDate(it.due_date)}`;
+      marker.style.background = `var(--pill-${statusPillColor(normalizeStatus(it.status))}-fg)`;
+      marker.title = `${it.title} — ${normalizeStatus(it.status)} — due ${formatDate(it.due_date)}`;
       track.appendChild(marker);
     });
 
@@ -521,6 +593,64 @@ function renderTimeline(items) {
   });
 }
 
+function renderTimelineLegend() {
+  timelineLegend.innerHTML = '';
+  TIMELINE_STATUS_LEGEND.forEach((status) => {
+    const item = document.createElement('div');
+    item.className = 'legend-item';
+    const dot = document.createElement('span');
+    dot.className = 'legend-dot';
+    dot.style.background = `var(--pill-${statusPillColor(status)}-fg)`;
+    const label = document.createElement('span');
+    label.textContent = status;
+    item.appendChild(dot);
+    item.appendChild(label);
+    timelineLegend.appendChild(item);
+  });
+}
+
+function renderTimelineHeader(min, max, span, today) {
+  const spacer = document.createElement('div');
+  spacer.className = 'header-spacer';
+
+  const headerTrack = document.createElement('div');
+  headerTrack.className = 'header-track';
+
+  const monthTicks = document.createElement('div');
+  monthTicks.className = 'timeline-month-ticks';
+
+  const cursor = new Date(min);
+  cursor.setDate(1);
+  cursor.setHours(0, 0, 0, 0);
+  while (cursor.getTime() <= max) {
+    const pos = ((cursor.getTime() - min) / span) * 100;
+    if (pos >= 0 && pos <= 100) {
+      const tick = document.createElement('div');
+      tick.className = 'tick';
+      tick.style.left = `${pos}%`;
+      tick.textContent = cursor.toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+      monthTicks.appendChild(tick);
+    }
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+
+  const todayMarker = document.createElement('div');
+  todayMarker.className = 'timeline-today-marker';
+  if (today >= min && today <= max) {
+    const label = document.createElement('div');
+    label.className = 'marker-label';
+    label.style.left = `${((today - min) / span) * 100}%`;
+    label.textContent = '▾ We are here';
+    todayMarker.appendChild(label);
+  }
+
+  headerTrack.appendChild(monthTicks);
+  headerTrack.appendChild(todayMarker);
+
+  timelineHeader.appendChild(spacer);
+  timelineHeader.appendChild(headerTrack);
+}
+
 // --- PendingPlan (editable) ---
 
 function renderPlan(planItems) {
@@ -528,7 +658,7 @@ function renderPlan(planItems) {
   if (planItems.length === 0) {
     const empty = document.createElement('p');
     empty.className = 'muted';
-    empty.textContent = 'No plan proposed yet.';
+    empty.textContent = 'No plan proposed yet. Drag a task in from the Master Task List.';
     planRows.appendChild(empty);
     return;
   }
@@ -536,10 +666,97 @@ function renderPlan(planItems) {
   planItems
     .slice()
     .sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''))
-    .forEach((row) => planRows.appendChild(renderPlanRow(row)));
+    .forEach((row) => {
+      const sourceItem = lastReportingItems.find((it) => it.id === row.source_item_id);
+      const el = sourceItem ? renderLinkedPlanRow(row, sourceItem) : renderAdHocPlanRow(row);
+      el.dataset.planId = row.id;
+      planRows.appendChild(el);
+    });
 }
 
-function renderPlanRow(row) {
+// Tile for a plan row linked to a real Master Task List item — mirrors that row's
+// live title/type/status/priority (not a frozen copy) plus scheduling-only fields.
+function renderLinkedPlanRow(row, sourceItem) {
+  const included = row.include === true || row.include === 'true' || row.include === 'TRUE';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'plan-row linked' + (included ? '' : ' excluded');
+
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.checked = included;
+  checkbox.title = 'Include on Approve';
+
+  const title = document.createElement('div');
+  title.className = 'row-title';
+  title.textContent = sourceItem.title;
+
+  const pills = document.createElement('div');
+  pills.className = 'row-pills';
+  if (sourceItem.type) pills.appendChild(makePill(typePillColor(sourceItem.type), sourceItem.type));
+  pills.appendChild(makePill(statusPillColor(normalizeStatus(sourceItem.status)), normalizeStatus(sourceItem.status)));
+  if (sourceItem.priority) pills.appendChild(makePill(priorityPillColor(sourceItem.priority), sourceItem.priority));
+
+  const timeInput = document.createElement('input');
+  timeInput.type = 'time';
+  timeInput.className = 'schedule-input';
+  timeInput.value = row.start_time || '';
+  timeInput.title = 'Start time';
+
+  const durationInput = document.createElement('input');
+  durationInput.type = 'number';
+  durationInput.className = 'schedule-input';
+  durationInput.placeholder = 'min';
+  durationInput.value = row.duration_minutes || '';
+  durationInput.title = 'Duration (minutes)';
+
+  const deleteBtn = document.createElement('button');
+  deleteBtn.type = 'button';
+  deleteBtn.className = 'delete-btn';
+  deleteBtn.textContent = '✕';
+  deleteBtn.title = 'Remove from Today\'s Plan';
+  deleteBtn.addEventListener('click', async () => {
+    lastPlanItems = lastPlanItems.filter((p) => p.id !== row.id);
+    renderPlan(lastPlanItems);
+    await deletePlanRow(row.id);
+  });
+
+  async function saveRow() {
+    const result = await upsertPlanRow({
+      id: row.id,
+      source_item_id: row.source_item_id,
+      title: sourceItem.title,
+      date: row.date,
+      start_time: timeInput.value,
+      duration_minutes: durationInput.value,
+      block_type: row.block_type || 'flexible',
+      include: checkbox.checked,
+      notes: row.notes || '',
+      status: row.status || 'proposed'
+    });
+    if (result.ok) flashSaved(wrap);
+  }
+
+  checkbox.addEventListener('change', () => {
+    wrap.classList.toggle('excluded', !checkbox.checked);
+    saveRow();
+  });
+  timeInput.addEventListener('change', saveRow);
+  durationInput.addEventListener('change', saveRow);
+
+  wrap.appendChild(checkbox);
+  wrap.appendChild(title);
+  wrap.appendChild(pills);
+  wrap.appendChild(timeInput);
+  wrap.appendChild(durationInput);
+  wrap.appendChild(deleteBtn);
+  return wrap;
+}
+
+// Fallback for legacy/ad-hoc PendingPlan rows with no matching Master Task List
+// item (e.g. rows created before this change) — keeps the older full-field editor
+// so nothing existing silently breaks.
+function renderAdHocPlanRow(row) {
   const included = row.include === true || row.include === 'true' || row.include === 'TRUE';
 
   const wrap = document.createElement('div');

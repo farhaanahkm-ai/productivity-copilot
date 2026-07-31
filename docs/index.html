@@ -43,13 +43,13 @@
         <div class="panel-header">
           <h2>Today's Plan <span class="muted">(pending)</span></h2>
         </div>
-        <p class="muted hint">Drag any item from Status below to add it here.</p>
+        <p class="muted hint">Drag any task from the Master Task List below to add it here.</p>
         <div id="pending-plan-rows" class="dropzone"></div>
       </section>
 
       <section id="status-section" class="panel">
         <div class="panel-header">
-          <h2>Status</h2>
+          <h2>Master Task List by Project</h2>
         </div>
         <button id="add-block-btn" type="button">+ Add block</button>
         <div id="status-groups"></div>
@@ -60,6 +60,8 @@
           <h2>Timeline</h2>
           <span class="muted">by due date, grouped by project</span>
         </div>
+        <div id="timeline-legend" class="timeline-legend"></div>
+        <div id="timeline-header" class="timeline-header"></div>
         <div id="timeline-rows"></div>
       </section>
     </main>

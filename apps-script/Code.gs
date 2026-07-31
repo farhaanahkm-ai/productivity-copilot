@@ -48,6 +48,16 @@ function doGet(e) {
     return reportingUpdate(params.id, fields);
   }
 
+  if (action === 'reporting_create') {
+    var newFields;
+    try {
+      newFields = JSON.parse(params.fields || '{}');
+    } catch (err) {
+      return jsonResponse({ error: 'invalid fields JSON' });
+    }
+    return reportingCreate(newFields);
+  }
+
   var resource = params.resource || 'reporting';
 
   if (resource === 'reporting') {
@@ -144,6 +154,36 @@ function reportingUpdate(id, fields) {
     }
   }
   return jsonResponse({ error: 'id not found: ' + id });
+}
+
+// Creates a brand-new Reporting row (the "+ Add block" flow now adds a task to the
+// Master Task List directly, rather than a scratch PendingPlan row). The id is
+// always server-generated, ignoring any client-supplied id, to guarantee uniqueness
+// against the existing hand-authored ids (W01, PE00, etc.).
+function reportingCreate(fields) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(REPORTING_SHEET_NAME);
+  if (!sheet) return jsonResponse({ error: 'sheet not found: ' + REPORTING_SHEET_NAME });
+
+  var headers = sheet.getDataRange().getValues()[0];
+  var tz = Session.getScriptTimeZone();
+  var id = 'NEW' + new Date().getTime();
+
+  var defaults = {
+    title: 'New task',
+    type: 'project',
+    life_area: 'other',
+    status: 'not started',
+    priority: 'medium',
+    flexibility: 'flexible',
+    last_updated: Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd')
+  };
+  var merged = Object.assign({}, defaults, fields, { id: id });
+
+  var newRow = headers.map(function (header) {
+    return merged.hasOwnProperty(header) ? merged[header] : '';
+  });
+  sheet.appendRow(newRow);
+  return jsonResponse({ ok: true, id: id });
 }
 
 function pendingPlanDelete(id) {

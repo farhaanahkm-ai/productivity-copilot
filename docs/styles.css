@@ -331,10 +331,51 @@ header h1 {
 .status-row:last-child { border-bottom: none; }
 .status-row:hover { background: var(--bg); }
 
-.status-row .row-title {
+.status-row .drag-handle {
+  color: var(--muted);
+  font-size: 0.9rem;
+  cursor: grab;
+  user-select: none;
+  padding: 0 0.1rem;
+}
+
+.status-row .row-title-input {
   font-weight: 600;
   flex: 1 1 auto;
   min-width: 160px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 0.95rem;
+  padding: 0.15rem 0.3rem;
+  border-radius: 5px;
+}
+
+.status-row .row-title-input:hover,
+.status-row .row-title-input:focus {
+  border-color: var(--border);
+  background: var(--card-bg);
+}
+
+.status-row .row-body { flex: 1 1 auto; min-width: 200px; display: flex; flex-direction: column; gap: 0.3rem; }
+
+.status-row .next-steps-input {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 0.8rem;
+  padding: 0.15rem 0.3rem;
+  border-radius: 5px;
+  width: 100%;
+}
+
+.status-row .next-steps-input:hover,
+.status-row .next-steps-input:focus {
+  border-color: var(--border);
+  background: var(--card-bg);
+  color: var(--fg);
 }
 
 .status-row .row-pills {
@@ -414,6 +455,38 @@ header h1 {
   padding: 0.3rem;
 }
 
+/* Linked plan tiles (dragged in from the Master Task List) — mirror status-row's
+   compact pill look instead of the raw multi-field form used by ad-hoc rows. */
+.plan-row.linked {
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 0.5rem 0.6rem;
+}
+
+.plan-row.linked .row-title {
+  font-weight: 600;
+  flex: 1 1 auto;
+  min-width: 140px;
+}
+
+.plan-row.linked .row-pills {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.plan-row.linked .schedule-input {
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  color: var(--fg);
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.72rem;
+  font-family: inherit;
+  width: 4.6rem;
+}
+
 #add-block-btn {
   border: 1px dashed var(--accent-purple);
   background: transparent;
@@ -490,21 +563,67 @@ header h1 {
   cursor: default;
 }
 
-.timeline-axis-labels {
-  display: grid;
-  grid-template-columns: 140px 1fr;
-  gap: 0.75rem;
-  margin-bottom: 0.4rem;
-}
-
-.timeline-axis-labels .axis-track {
-  position: relative;
-  height: 1rem;
-  font-size: 0.7rem;
+.timeline-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.9rem;
+  margin-bottom: 0.6rem;
+  font-size: 0.78rem;
   color: var(--muted);
 }
 
-.timeline-axis-labels .axis-tick {
+.timeline-legend .legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.timeline-legend .legend-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.timeline-header {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 0.75rem;
+  margin-bottom: 0.3rem;
+}
+
+.timeline-header .header-spacer { }
+
+.timeline-header .header-track {
+  position: relative;
+  height: 2.4rem;
+}
+
+.timeline-month-ticks {
+  position: relative;
+  height: 1.1rem;
+  font-size: 0.68rem;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.timeline-month-ticks .tick {
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  padding-left: 2px;
+  border-left: 1px solid var(--border);
+}
+
+.timeline-today-marker {
+  position: relative;
+  height: 1.2rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--accent-purple);
+}
+
+.timeline-today-marker .marker-label {
   position: absolute;
   transform: translateX(-50%);
   white-space: nowrap;

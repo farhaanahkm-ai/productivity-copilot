@@ -1,5 +1,5 @@
 // Fill in after deploying the Apps Script web app (see /apps-script/README.md).
-const API_URL = 'PASTE_APPS_SCRIPT_WEB_APP_URL_HERE';
+const API_URL = 'https://script.google.com/macros/s/AKfycbwzLA7Z9n4XBaEEY_25dOklkH5mEzly7YMhGci_CDRBe6sS1E3uFImlz2JFhW6yOGwi/exec';
 const POLL_INTERVAL_MS = 90 * 1000;
 
 let secret = null;

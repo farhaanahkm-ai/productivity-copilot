@@ -12,36 +12,79 @@ const app = document.getElementById('app');
 const refreshBtn = document.getElementById('refresh-btn');
 const bannerArea = document.getElementById('banner-area');
 const statusGroups = document.getElementById('status-groups');
+const planRows = document.getElementById('pending-plan-rows');
+const addBlockBtn = document.getElementById('add-block-btn');
 
 gateForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   const candidate = document.getElementById('gate-secret').value;
   gateError.classList.add('hidden');
-  const ok = await loadDashboard(candidate);
+  const ok = await loadAll(candidate);
   if (ok) {
     secret = candidate;
     gate.classList.add('hidden');
     app.classList.remove('hidden');
-    pollTimer = setInterval(() => loadDashboard(secret), POLL_INTERVAL_MS);
+    pollTimer = setInterval(() => loadAll(secret), POLL_INTERVAL_MS);
   } else {
     gateError.classList.remove('hidden');
   }
 });
 
 refreshBtn.addEventListener('click', () => {
-  if (secret) loadDashboard(secret);
+  if (secret) loadAll(secret);
 });
 
-async function loadDashboard(key) {
+addBlockBtn.addEventListener('click', async () => {
+  const today = new Date().toISOString().slice(0, 10);
+  await upsertPlanRow({
+    title: '',
+    date: today,
+    start_time: '',
+    duration_minutes: '',
+    block_type: 'flexible',
+    include: true,
+    notes: '',
+    status: 'proposed'
+  });
+  loadAll(secret);
+});
+
+async function loadAll(key) {
+  const [reporting, plan] = await Promise.all([
+    fetchResource(key, 'reporting'),
+    fetchResource(key, 'pendingplan')
+  ]);
+  if (!reporting.ok || !plan.ok) return false;
+  render(reporting.items, plan.items);
+  return true;
+}
+
+async function fetchResource(key, resource) {
   try {
-    const res = await fetch(`${API_URL}?key=${encodeURIComponent(key)}`);
+    const res = await fetch(`${API_URL}?key=${encodeURIComponent(key)}&resource=${resource}`);
     const data = await res.json();
-    if (data.error) return false;
-    render(data.items || []);
-    return true;
+    if (data.error) return { ok: false, items: [] };
+    return { ok: true, items: data.items || [] };
   } catch (err) {
-    return false;
+    return { ok: false, items: [] };
   }
+}
+
+// Content-Type: text/plain avoids a CORS preflight against the Apps Script endpoint.
+async function postAction(payload) {
+  return fetch(API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify(Object.assign({ key: secret }, payload))
+  });
+}
+
+async function upsertPlanRow(row) {
+  return postAction({ action: 'pendingplan_upsert', row });
+}
+
+async function deletePlanRow(id) {
+  return postAction({ action: 'pendingplan_delete', id });
 }
 
 function daysBetween(dateStr) {
@@ -52,9 +95,10 @@ function daysBetween(dateStr) {
   return Math.floor((now - then) / (1000 * 60 * 60 * 24));
 }
 
-function render(items) {
+function render(items, planItems) {
   renderBanners(items);
   renderGroups(items);
+  renderPlan(planItems);
 }
 
 function renderBanners(items) {
@@ -138,4 +182,100 @@ function renderItemCard(it) {
   card.appendChild(title);
   card.appendChild(meta);
   return card;
+}
+
+// --- PendingPlan (editable) ---
+
+function renderPlan(planItems) {
+  planRows.innerHTML = '';
+  if (planItems.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'muted';
+    empty.textContent = 'No plan proposed yet.';
+    planRows.appendChild(empty);
+    return;
+  }
+
+  planItems
+    .slice()
+    .sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''))
+    .forEach((row) => planRows.appendChild(renderPlanRow(row)));
+}
+
+function renderPlanRow(row) {
+  const included = row.include === true || row.include === 'true' || row.include === 'TRUE';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'plan-row' + (included ? '' : ' excluded');
+
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.checked = included;
+  checkbox.title = 'Include on Approve';
+  checkbox.addEventListener('change', () => {
+    wrap.classList.toggle('excluded', !checkbox.checked);
+    saveRow();
+  });
+
+  const fields = document.createElement('div');
+  fields.className = 'plan-fields';
+
+  const titleInput = makeField('text', 'plan-title', row.title, 'Block title');
+  const dateInput = makeField('date', 'plan-date', row.date);
+  const timeInput = makeField('time', 'plan-time', row.start_time);
+  const durationInput = makeField('number', 'plan-duration', row.duration_minutes, 'min');
+  const notesInput = document.createElement('textarea');
+  notesInput.className = 'plan-notes';
+  notesInput.placeholder = 'Notes / specific next-step';
+  notesInput.value = row.notes || '';
+
+  [titleInput, dateInput, timeInput, durationInput, notesInput].forEach((el) => {
+    el.addEventListener('change', saveRow);
+  });
+
+  fields.appendChild(titleInput);
+  fields.appendChild(dateInput);
+  fields.appendChild(timeInput);
+  fields.appendChild(durationInput);
+  fields.appendChild(notesInput);
+
+  const deleteBtn = document.createElement('button');
+  deleteBtn.type = 'button';
+  deleteBtn.className = 'delete-btn';
+  deleteBtn.textContent = '✕';
+  deleteBtn.title = 'Delete this block';
+  deleteBtn.addEventListener('click', async () => {
+    await deletePlanRow(row.id);
+    loadAll(secret);
+  });
+
+  wrap.appendChild(checkbox);
+  wrap.appendChild(fields);
+  wrap.appendChild(deleteBtn);
+
+  async function saveRow() {
+    await upsertPlanRow({
+      id: row.id,
+      source_item_id: row.source_item_id || '',
+      title: titleInput.value,
+      date: dateInput.value,
+      start_time: timeInput.value,
+      duration_minutes: durationInput.value,
+      block_type: row.block_type || 'flexible',
+      include: checkbox.checked,
+      notes: notesInput.value,
+      status: row.status || 'proposed'
+    });
+  }
+
+  return wrap;
+}
+
+function makeField(type, className, value, placeholder) {
+  const input = document.createElement('input');
+  input.type = type;
+  input.className = className;
+  input.value = value || '';
+  if (placeholder) input.placeholder = placeholder;
+  return input;
 }

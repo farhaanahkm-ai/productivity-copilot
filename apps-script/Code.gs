@@ -38,6 +38,16 @@ function doGet(e) {
     return pendingPlanDelete(params.id);
   }
 
+  if (action === 'reporting_update') {
+    var fields;
+    try {
+      fields = JSON.parse(params.fields || '{}');
+    } catch (err) {
+      return jsonResponse({ error: 'invalid fields JSON' });
+    }
+    return reportingUpdate(params.id, fields);
+  }
+
   var resource = params.resource || 'reporting';
 
   if (resource === 'reporting') {
@@ -102,6 +112,38 @@ function pendingPlanUpsert(row) {
   });
   sheet.appendRow(newRow);
   return jsonResponse({ ok: true, id: row.id, created: true });
+}
+
+// --- Reporting ---
+
+// Updates only existing Reporting rows (no creation) — for inline dashboard edits
+// like status/priority/due_date. Also refreshes last_updated automatically.
+function reportingUpdate(id, fields) {
+  if (!id) return jsonResponse({ error: 'missing id' });
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(REPORTING_SHEET_NAME);
+  if (!sheet) return jsonResponse({ error: 'sheet not found: ' + REPORTING_SHEET_NAME });
+
+  var values = sheet.getDataRange().getValues();
+  var headers = values[0];
+  var idCol = headers.indexOf('id');
+  var lastUpdatedCol = headers.indexOf('last_updated');
+
+  for (var r = 1; r < values.length; r++) {
+    if (values[r][idCol] === id) {
+      var rowNum = r + 1;
+      headers.forEach(function (header, c) {
+        if (fields.hasOwnProperty(header)) {
+          sheet.getRange(rowNum, c + 1).setValue(fields[header]);
+        }
+      });
+      if (lastUpdatedCol > -1) {
+        var tz = Session.getScriptTimeZone();
+        sheet.getRange(rowNum, lastUpdatedCol + 1).setValue(Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd'));
+      }
+      return jsonResponse({ ok: true, id: id });
+    }
+  }
+  return jsonResponse({ error: 'id not found: ' + id });
 }
 
 function pendingPlanDelete(id) {

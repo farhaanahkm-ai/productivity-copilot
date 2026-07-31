@@ -43,15 +43,24 @@
         <div class="panel-header">
           <h2>Today's Plan <span class="muted">(pending)</span></h2>
         </div>
-        <div id="pending-plan-rows"></div>
-        <button id="add-block-btn" type="button">+ Add block</button>
+        <p class="muted hint">Drag any item from Status below to add it here.</p>
+        <div id="pending-plan-rows" class="dropzone"></div>
       </section>
 
       <section id="status-section" class="panel">
         <div class="panel-header">
           <h2>Status</h2>
         </div>
+        <button id="add-block-btn" type="button">+ Add block</button>
         <div id="status-groups"></div>
+      </section>
+
+      <section id="timeline-section" class="panel">
+        <div class="panel-header">
+          <h2>Timeline</h2>
+          <span class="muted">by due date, grouped by project</span>
+        </div>
+        <div id="timeline-rows"></div>
       </section>
     </main>
   </div>

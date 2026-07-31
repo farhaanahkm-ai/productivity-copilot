@@ -273,6 +273,35 @@ header h1 {
 .pill-gray { background: var(--pill-gray-bg); color: var(--pill-gray-fg); }
 .pill-purple { background: var(--pill-purple-bg); color: var(--pill-purple-fg); }
 
+/* Editable pills (select / date input styled to match static pills) */
+.pill-select, .pill-date {
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  border-radius: 999px;
+  padding: 0.1rem 1.4rem 0.1rem 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 9px) 55%, calc(100% - 5px) 55%;
+  background-size: 4px 4px, 4px 4px;
+  background-repeat: no-repeat;
+}
+
+.pill-date {
+  padding: 0.1rem 0.5rem;
+  background-image: none;
+  cursor: text;
+}
+
+.pill-select.pill-blue, .pill-date.pill-blue { background-color: var(--pill-blue-bg); color: var(--pill-blue-fg); }
+.pill-select.pill-pink, .pill-date.pill-pink { background-color: var(--pill-pink-bg); color: var(--pill-pink-fg); }
+.pill-select.pill-peach, .pill-date.pill-peach { background-color: var(--pill-peach-bg); color: var(--pill-peach-fg); }
+.pill-select.pill-green, .pill-date.pill-green { background-color: var(--pill-green-bg); color: var(--pill-green-fg); }
+.pill-select.pill-gray, .pill-date.pill-gray { background-color: var(--pill-gray-bg); color: var(--pill-gray-fg); }
+
 /* Status list (table-ish rows) */
 .status-group { margin-bottom: 1rem; }
 .status-group:last-child { margin-bottom: 0; }
@@ -294,7 +323,10 @@ header h1 {
   border-radius: 8px;
   border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
+  transition: background-color 0.2s ease;
 }
+
+.status-row.just-saved { background-color: var(--accent-teal-soft); }
 
 .status-row:last-child { border-bottom: none; }
 .status-row:hover { background: var(--bg); }
@@ -309,6 +341,20 @@ header h1 {
   display: flex;
   gap: 0.35rem;
   flex-wrap: wrap;
+  align-items: center;
+}
+
+.status-row[draggable="true"] { cursor: grab; }
+.status-row.dragging { opacity: 0.4; }
+
+.show-more-btn {
+  border: none;
+  background: transparent;
+  color: var(--accent-purple);
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.35rem 0.2rem;
 }
 
 /* PendingPlan rows */
@@ -377,4 +423,89 @@ header h1 {
   cursor: pointer;
   font-size: 0.9rem;
   font-weight: 600;
+  margin-bottom: 0.75rem;
+}
+
+.hint {
+  font-size: 0.82rem;
+  margin: -0.25rem 0 0.6rem;
+}
+
+.dropzone {
+  border-radius: 10px;
+  transition: background 0.15s ease, outline-color 0.15s ease;
+  outline: 2px dashed transparent;
+  outline-offset: 4px;
+}
+
+.dropzone.drag-over {
+  outline-color: var(--accent-teal);
+  background: var(--accent-teal-soft);
+}
+
+/* Timeline */
+.timeline-row {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.timeline-row:last-child { border-bottom: none; }
+
+.timeline-project-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timeline-track {
+  position: relative;
+  height: 1.8rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.timeline-today-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent-purple);
+}
+
+.timeline-marker {
+  position: absolute;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  border: 2px solid var(--card-bg);
+  cursor: default;
+}
+
+.timeline-axis-labels {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 0.75rem;
+  margin-bottom: 0.4rem;
+}
+
+.timeline-axis-labels .axis-track {
+  position: relative;
+  height: 1rem;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.timeline-axis-labels .axis-tick {
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
 }

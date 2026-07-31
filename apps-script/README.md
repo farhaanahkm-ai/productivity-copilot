@@ -34,6 +34,9 @@ Editing and saving `Code.gs` in the editor is not enough — the live URL keeps 
 **GET** `?key=<secret>&action=pendingplan_delete&id=PP...`
 → Removes that row from PendingPlan.
 
+**GET** `?key=<secret>&action=reporting_update&id=<Reporting id, e.g. PE01>&fields=<URL-encoded JSON, e.g. {"status":"in progress"}>`
+→ Updates only the given fields on the matching Reporting row (no row creation — this is for inline dashboard edits, not adding new tracked items). `last_updated` is refreshed server-side automatically.
+
 All writes go through GET, not POST — Apps Script's `/exec` URL always 302-redirects to a `googleusercontent.com` URL for the actual response, and per the fetch spec, browsers silently rewrite a POST into a bodyless GET on that kind of redirect. A `doPost` handler would simply never be reached with its body intact when called from client-side `fetch()`. Encoding writes as GET query params (like reads already do) sidesteps the problem entirely, at the cost of a URL length ceiling — fine for planning-block-sized data, would become a real constraint for anything larger.
 
 ### PendingPlan columns
@@ -48,5 +51,6 @@ All writes go through GET, not POST — Apps Script's `/exec` URL always 302-red
 
 - [x] Read-only JSON endpoint (`doGet`) — returns all Reporting Sheet rows as `{ items: [...] }`, gated by `?key=<DASHBOARD_SECRET>`
 - [x] PendingPlan read/write endpoint (`resource=pendingplan`, `pendingplan_upsert`, `pendingplan_delete`)
+- [x] Reporting inline-edit endpoint (`reporting_update`) — status/priority/due_date editable from the dashboard
 - [ ] Chat-edit endpoint (needs `ANTHROPIC_API_KEY` script property)
 - [ ] Approve / real-Calendar-write endpoint

@@ -42,16 +42,32 @@
       <section id="pending-plan-section" class="panel">
         <div class="panel-header">
           <h2>Today's Plan <span class="muted">(pending)</span></h2>
+          <div class="panel-header-actions">
+            <span id="plan-dirty-indicator" class="muted hidden">unsaved changes</span>
+            <button id="save-plan-btn" type="button">Save Plan</button>
+          </div>
         </div>
-        <p class="muted hint">Drag any task from the Master Task List below to add it here.</p>
+        <p class="muted hint">Drag tasks in from the Master Task List, drag to reorder, drag out or delete to remove. Nothing here is saved until you click Save Plan.</p>
         <div id="pending-plan-rows" class="dropzone"></div>
+      </section>
+
+      <section id="add-block-section" class="panel">
+        <div class="panel-header">
+          <h2>Add Block</h2>
+        </div>
+        <p class="muted hint">Drafts a new task into the Master Task List below — not into Today's Plan directly.</p>
+        <div class="add-block-form">
+          <input type="text" id="new-block-title" placeholder="Block title">
+          <input type="date" id="new-block-date">
+          <input type="text" id="new-block-notes" placeholder="Notes / specific next step">
+          <button id="confirm-add-block-btn" type="button">Add Block</button>
+        </div>
       </section>
 
       <section id="status-section" class="panel">
         <div class="panel-header">
           <h2>Master Task List by Project</h2>
         </div>
-        <button id="add-block-btn" type="button">+ Add block</button>
         <div id="status-groups"></div>
       </section>
 

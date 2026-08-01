@@ -255,6 +255,61 @@ header h1 {
   margin: 0;
 }
 
+.panel-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+#plan-dirty-indicator {
+  font-size: 0.75rem;
+}
+
+#save-plan-btn {
+  border: none;
+  background: var(--accent-purple);
+  color: #ffffff;
+  border-radius: 8px;
+  padding: 0.4rem 0.9rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+#save-plan-btn.saved { background: var(--success-border); }
+#save-plan-btn:disabled { opacity: 0.6; cursor: default; }
+
+.add-block-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.add-block-form input {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  border-radius: 6px;
+  padding: 0.4rem 0.55rem;
+  font-size: 0.88rem;
+  font-family: inherit;
+}
+
+.add-block-form #new-block-title { flex: 1 1 220px; }
+.add-block-form #new-block-notes { flex: 1 1 220px; }
+
+#confirm-add-block-btn {
+  border: none;
+  background: var(--accent-teal);
+  color: #ffffff;
+  border-radius: 8px;
+  padding: 0.5rem 0.9rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
 /* Pills */
 .pill {
   display: inline-flex;
@@ -413,6 +468,10 @@ header h1 {
 
 .plan-row.excluded { opacity: 0.5; }
 .plan-row.just-saved { border-color: var(--success-border); }
+.plan-row.dragging { opacity: 0.4; }
+.plan-row .drag-handle { color: var(--muted); font-size: 0.9rem; cursor: grab; user-select: none; padding: 0 0.1rem; }
+.plan-row.drop-before { border-top: 2px solid var(--accent-teal); }
+.plan-row.drop-after { border-bottom: 2px solid var(--accent-teal); }
 
 .plan-row input[type="checkbox"] {
   margin-top: 0.5rem;

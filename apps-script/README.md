@@ -50,6 +50,8 @@ All writes go through GET, not POST — Apps Script's `/exec` URL always 302-red
 - `status` — `proposed` / `approved` / `written`.
 - `calendar_event_id` — filled in by the Approve endpoint once it's actually written to the real Calendar.
 
+**Don't manually reorder the PendingPlan tab's columns.** All reads/writes use the `PENDING_PLAN_HEADERS` constant in `Code.gs` for column order, not whatever row 1 of the sheet actually says — deliberately, so a stray manual header edit can't silently misalign a field into the wrong column. That means the code's column order is the source of truth, not the sheet's visible header row.
+
 ## Status
 
 - [x] Read-only JSON endpoint (`doGet`) — returns all Reporting Sheet rows as `{ items: [...] }`, gated by `?key=<DASHBOARD_SECRET>`

@@ -70,7 +70,7 @@ function doGet(e) {
 
   if (resource === 'pendingplan') {
     var planSheet = getOrCreatePendingPlanSheet();
-    return jsonResponse({ items: sheetToObjects(planSheet) });
+    return jsonResponse({ items: pendingPlanToObjects(planSheet) });
   }
 
   return jsonResponse({ error: 'unknown resource: ' + resource });
@@ -94,11 +94,15 @@ function getOrCreatePendingPlanSheet() {
 }
 
 // Creates a new row if row.id is blank or not found, otherwise updates the matching row in place.
+// Always uses the PENDING_PLAN_HEADERS constant for column order — not whatever the
+// sheet's actual row 1 currently says — so a manually reordered/edited header row
+// can't silently misalign which column a field lands in (this caused linked plan
+// tiles to intermittently lose their source_item_id and fall back to the generic
+// ad-hoc editor).
 function pendingPlanUpsert(row) {
   var sheet = getOrCreatePendingPlanSheet();
   var values = sheet.getDataRange().getValues();
-  var headers = values[0];
-  var idCol = headers.indexOf('id');
+  var idCol = PENDING_PLAN_HEADERS.indexOf('id');
 
   row.last_modified = new Date().toISOString();
   if (!row.id) {
@@ -108,7 +112,7 @@ function pendingPlanUpsert(row) {
   for (var r = 1; r < values.length; r++) {
     if (values[r][idCol] === row.id) {
       var rowNum = r + 1;
-      headers.forEach(function (header, c) {
+      PENDING_PLAN_HEADERS.forEach(function (header, c) {
         if (row.hasOwnProperty(header)) {
           sheet.getRange(rowNum, c + 1).setValue(row[header]);
         }
@@ -117,11 +121,23 @@ function pendingPlanUpsert(row) {
     }
   }
 
-  var newRow = headers.map(function (header) {
+  var newRow = PENDING_PLAN_HEADERS.map(function (header) {
     return row.hasOwnProperty(header) ? row[header] : '';
   });
   sheet.appendRow(newRow);
   return jsonResponse({ ok: true, id: row.id, created: true });
+}
+
+function pendingPlanToObjects(sheet) {
+  var values = sheet.getDataRange().getValues();
+  if (values.length < 2) return [];
+  return values.slice(1)
+    .filter(function (row) { return row[0] !== ''; })
+    .map(function (row) {
+      var obj = {};
+      PENDING_PLAN_HEADERS.forEach(function (header, i) { obj[header] = row[i]; });
+      return obj;
+    });
 }
 
 // --- Reporting ---
@@ -190,7 +206,7 @@ function pendingPlanDelete(id) {
   if (!id) return jsonResponse({ error: 'missing id' });
   var sheet = getOrCreatePendingPlanSheet();
   var values = sheet.getDataRange().getValues();
-  var idCol = values[0].indexOf('id');
+  var idCol = PENDING_PLAN_HEADERS.indexOf('id');
 
   for (var r = 1; r < values.length; r++) {
     if (values[r][idCol] === id) {

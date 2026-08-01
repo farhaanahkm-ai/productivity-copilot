@@ -14,7 +14,12 @@ const refreshBtn = document.getElementById('refresh-btn');
 const bannerArea = document.getElementById('banner-area');
 const statusGroups = document.getElementById('status-groups');
 const planRows = document.getElementById('pending-plan-rows');
-const addBlockBtn = document.getElementById('add-block-btn');
+const savePlanBtn = document.getElementById('save-plan-btn');
+const dirtyIndicator = document.getElementById('plan-dirty-indicator');
+const newBlockTitle = document.getElementById('new-block-title');
+const newBlockDate = document.getElementById('new-block-date');
+const newBlockNotes = document.getElementById('new-block-notes');
+const confirmAddBlockBtn = document.getElementById('confirm-add-block-btn');
 const areaFilters = document.getElementById('area-filters');
 const glanceStats = document.getElementById('glance-stats');
 const timelineRows = document.getElementById('timeline-rows');
@@ -23,62 +28,122 @@ const timelineLegend = document.getElementById('timeline-legend');
 
 let currentAreaFilter = 'all';
 let lastReportingItems = [];
-let lastPlanItems = [];
 const expandedGroups = new Set();
+
+// Today's Plan is a local "cart": every drag/reorder/delete/edit inside it mutates
+// this array and re-renders instantly, with zero network calls. Nothing reaches the
+// PendingPlan sheet until "Save Plan" is clicked, which diffs `cart` against
+// `serverPlanSnapshot` and syncs in one batch. The background poll and manual
+// refresh button deliberately never touch `cart` — only Master Task List / Status /
+// Timeline data — so they can't clobber in-progress unsaved plan edits.
+let cart = [];
+let serverPlanSnapshot = [];
+let cartDirty = false;
 
 function genId(prefix) {
   return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+function setDirty(val) {
+  cartDirty = val;
+  dirtyIndicator.classList.toggle('hidden', !val);
 }
 
 gateForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   const candidate = document.getElementById('gate-secret').value;
   gateError.classList.add('hidden');
-  const ok = await loadAll(candidate);
+  const ok = await initialLoad(candidate);
   if (ok) {
     secret = candidate;
     gate.classList.add('hidden');
     app.classList.remove('hidden');
-    pollTimer = setInterval(() => loadAll(secret), POLL_INTERVAL_MS);
+    pollTimer = setInterval(() => refreshReportingOnly(), POLL_INTERVAL_MS);
   } else {
     gateError.classList.remove('hidden');
   }
 });
 
 refreshBtn.addEventListener('click', () => {
-  if (secret) loadAll(secret);
+  if (secret) refreshReportingOnly();
 });
 
-// "+ Add block" now creates a new task directly in the Master Task List
-// (Reporting sheet), not a scratch PendingPlan row — Today's Plan is populated
-// exclusively by dragging existing tasks in.
-addBlockBtn.addEventListener('click', async () => {
-  const result = await performAction('reporting_create', { fields: JSON.stringify({ life_area: 'other' }) });
+// "+ Add block" drafts a new task straight into the Master Task List (Reporting
+// sheet) — Today's Plan is populated only by dragging existing tasks in, never by
+// this form.
+confirmAddBlockBtn.addEventListener('click', async () => {
+  const fields = { life_area: 'other' };
+  if (newBlockTitle.value.trim()) fields.title = newBlockTitle.value.trim();
+  if (newBlockDate.value) fields.due_date = newBlockDate.value;
+  if (newBlockNotes.value.trim()) fields.next_steps = newBlockNotes.value.trim();
+
+  const result = await performAction('reporting_create', { fields: JSON.stringify(fields) });
   if (result.ok) {
+    newBlockTitle.value = '';
+    newBlockDate.value = '';
+    newBlockNotes.value = '';
     expandedGroups.add('Other');
-    loadAll(secret);
+    await refreshReportingOnly();
   }
 });
 
-// Drag-and-drop: a Master Task List row dropped onto Today's Plan becomes a
-// scheduling entry linked back to that task (source_item_id), not a copy of its
-// content. Only one such entry per task is allowed — dropping the same task again
-// just flashes the existing tile instead of duplicating it.
+savePlanBtn.addEventListener('click', async () => {
+  savePlanBtn.disabled = true;
+  const currentIds = new Set(cart.map((c) => c.id));
+  const toDelete = serverPlanSnapshot.filter((p) => !currentIds.has(p.id));
+
+  const results = await Promise.all([
+    ...toDelete.map((p) => deletePlanRow(p.id)),
+    ...cart.map((row) => upsertPlanRow(row))
+  ]);
+
+  savePlanBtn.disabled = false;
+  if (results.every((r) => r.ok)) {
+    serverPlanSnapshot = cart.map((c) => Object.assign({}, c));
+    setDirty(false);
+    savePlanBtn.classList.add('saved');
+    savePlanBtn.textContent = 'Saved \u2713';
+    setTimeout(() => {
+      savePlanBtn.classList.remove('saved');
+      savePlanBtn.textContent = 'Save Plan';
+    }, 1500);
+  } else {
+    showTransientNotice('Some plan changes failed to save — try again.', 'danger');
+  }
+});
+
+// --- Today's Plan drag target: accepts a Master Task List task (add to cart) or a
+// reorder of an existing plan tile. Dropping a plan tile outside any valid target
+// (dragend fires with dropEffect 'none') removes it from the cart.
 planRows.addEventListener('dragover', (e) => {
   e.preventDefault();
   planRows.classList.add('drag-over');
+  updateDropIndicator(e.clientY);
 });
-planRows.addEventListener('dragleave', () => {
-  planRows.classList.remove('drag-over');
+planRows.addEventListener('dragleave', (e) => {
+  if (e.target === planRows) {
+    planRows.classList.remove('drag-over');
+    clearDropIndicators();
+  }
 });
-planRows.addEventListener('drop', async (e) => {
+planRows.addEventListener('drop', (e) => {
   e.preventDefault();
   planRows.classList.remove('drag-over');
+  clearDropIndicators();
 
-  const sourceId = e.dataTransfer.getData('text/plain');
-  if (!sourceId) return;
+  let payload;
+  try {
+    payload = JSON.parse(e.dataTransfer.getData('text/plain'));
+  } catch (err) {
+    return;
+  }
 
-  const existing = lastPlanItems.find((p) => p.source_item_id === sourceId);
+  if (payload.kind === 'task') handleTaskDrop(payload.id, e.clientY);
+  else if (payload.kind === 'plan') handlePlanReorder(payload.id, e.clientY);
+});
+
+function handleTaskDrop(sourceId, clientY) {
+  const existing = cart.find((p) => p.source_item_id === sourceId);
   if (existing) {
     const el = planRows.querySelector(`[data-plan-id="${cssEscape(existing.id)}"]`);
     if (el) flashSaved(el);
@@ -102,29 +167,93 @@ planRows.addEventListener('drop', async (e) => {
     status: 'proposed'
   };
 
-  // Optimistic: render immediately, sync to the sheet in the background — dragging
-  // used to feel laggy because we awaited a full reload before anything appeared.
-  lastPlanItems = lastPlanItems.concat([newRow]);
-  renderPlan(lastPlanItems);
+  cart.splice(computeInsertIndex(clientY, null), 0, newRow);
+  setDirty(true);
+  renderPlan(cart);
+}
 
-  const result = await upsertPlanRow(newRow);
-  if (!result.ok) {
-    lastPlanItems = lastPlanItems.filter((p) => p.id !== newRow.id);
-    renderPlan(lastPlanItems);
+function handlePlanReorder(planId, clientY) {
+  const fromIndex = cart.findIndex((c) => c.id === planId);
+  if (fromIndex === -1) return;
+
+  let insertIndex = computeInsertIndex(clientY, planId);
+  const [item] = cart.splice(fromIndex, 1);
+  if (insertIndex > fromIndex) insertIndex -= 1;
+  cart.splice(insertIndex, 0, item);
+
+  setDirty(true);
+  renderPlan(cart);
+}
+
+// Returns the cart-array index to insert at, based on where clientY falls among the
+// currently rendered tiles (excluding excludeId, e.g. the tile being dragged).
+function computeInsertIndex(clientY, excludeId) {
+  const tiles = Array.from(planRows.querySelectorAll('.plan-row'))
+    .filter((t) => t.dataset.planId !== excludeId);
+
+  for (const tile of tiles) {
+    const rect = tile.getBoundingClientRect();
+    if (clientY < rect.top + rect.height / 2) {
+      const targetId = tile.dataset.planId;
+      const idx = cart.findIndex((c) => c.id === targetId);
+      return idx === -1 ? cart.length : idx;
+    }
   }
-});
+  return cart.length;
+}
+
+function updateDropIndicator(clientY) {
+  clearDropIndicators();
+  const tiles = Array.from(planRows.querySelectorAll('.plan-row'));
+  for (const tile of tiles) {
+    const rect = tile.getBoundingClientRect();
+    if (clientY < rect.top + rect.height / 2) {
+      tile.classList.add('drop-before');
+      return;
+    }
+  }
+  if (tiles.length) tiles[tiles.length - 1].classList.add('drop-after');
+}
+
+function clearDropIndicators() {
+  planRows.querySelectorAll('.drop-before, .drop-after').forEach((el) => {
+    el.classList.remove('drop-before', 'drop-after');
+  });
+}
 
 function cssEscape(str) {
   return String(str).replace(/["\\]/g, '\\$&');
 }
 
-async function loadAll(key) {
+async function initialLoad(key) {
   const [reporting, plan] = await Promise.all([
     fetchResource(key, 'reporting'),
     fetchResource(key, 'pendingplan')
   ]);
   if (!reporting.ok || !plan.ok) return false;
-  render(reporting.items, plan.items);
+
+  lastReportingItems = reporting.items;
+  cart = plan.items.slice();
+  serverPlanSnapshot = plan.items.map((c) => Object.assign({}, c));
+
+  renderBanners(lastReportingItems);
+  renderGroups(lastReportingItems);
+  renderTimeline(lastReportingItems);
+  renderPlan(cart);
+  return true;
+}
+
+// Refreshes everything EXCEPT Today's Plan — used by the poll and the manual
+// refresh button, so they never overwrite unsaved local cart edits. Pick up
+// Routine-proposed plan blocks (or other-device Save Plan changes) by reloading
+// the page / re-entering the password.
+async function refreshReportingOnly() {
+  const res = await fetchResource(secret, 'reporting');
+  if (!res.ok) return false;
+  lastReportingItems = res.items;
+  renderBanners(lastReportingItems);
+  renderGroups(lastReportingItems);
+  renderTimeline(lastReportingItems);
   return true;
 }
 
@@ -206,15 +335,6 @@ function toDateInputValue(dateStr) {
   const d = new Date(dateStr);
   if (isNaN(d)) return '';
   return d.toISOString().slice(0, 10);
-}
-
-function render(items, planItems) {
-  lastReportingItems = items;
-  lastPlanItems = planItems;
-  renderBanners(items);
-  renderGroups(items);
-  renderPlan(planItems);
-  renderTimeline(items);
 }
 
 function renderBanners(items) {
@@ -399,7 +519,7 @@ function renderStatusRow(it) {
       return;
     }
     e.dataTransfer.effectAllowed = 'copy';
-    e.dataTransfer.setData('text/plain', it.id);
+    e.dataTransfer.setData('text/plain', JSON.stringify({ kind: 'task', id: it.id }));
     row.classList.add('dragging');
   });
   row.addEventListener('dragend', () => row.classList.remove('dragging'));
@@ -476,9 +596,10 @@ async function saveField(rowEl, id, fields) {
   const result = await updateReportingField(id, fields);
   if (result.ok) {
     flashSaved(rowEl);
-    // Delayed so the save flash is visible before the full reload replaces this row
-    // (banners/glance stats/overdue status/grouping can all shift based on this edit).
-    setTimeout(() => loadAll(secret), 900);
+    // Delayed so the save flash is visible before the refresh replaces this row
+    // (banners/glance stats/overdue status/grouping can all shift based on this
+    // edit). This only touches reporting-derived views, never Today's Plan.
+    setTimeout(() => refreshReportingOnly(), 900);
   }
 }
 
@@ -651,41 +772,72 @@ function renderTimelineHeader(min, max, span, today) {
   timelineHeader.appendChild(headerTrack);
 }
 
-// --- PendingPlan (editable) ---
+// --- Today's Plan (local cart, rendered from `cart` array order — user-arranged, not auto-sorted) ---
 
-function renderPlan(planItems) {
+function renderPlan(items) {
   planRows.innerHTML = '';
-  if (planItems.length === 0) {
+  if (items.length === 0) {
     const empty = document.createElement('p');
     empty.className = 'muted';
-    empty.textContent = 'No plan proposed yet. Drag a task in from the Master Task List.';
+    empty.textContent = 'No plan yet. Drag a task in from the Master Task List.';
     planRows.appendChild(empty);
     return;
   }
 
-  planItems
-    .slice()
-    .sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''))
-    .forEach((row) => {
-      const sourceItem = lastReportingItems.find((it) => it.id === row.source_item_id);
-      const el = sourceItem ? renderLinkedPlanRow(row, sourceItem) : renderAdHocPlanRow(row);
-      el.dataset.planId = row.id;
-      planRows.appendChild(el);
+  items.forEach((row) => {
+    const sourceItem = lastReportingItems.find((it) => it.id === row.source_item_id);
+    const el = sourceItem ? renderLinkedPlanRow(row, sourceItem) : renderAdHocPlanRow(row);
+    el.dataset.planId = row.id;
+    el.draggable = true;
+
+    el.addEventListener('dragstart', (e) => {
+      if (DRAG_BLOCKED_TAGS.includes(e.target.tagName)) {
+        e.preventDefault();
+        return;
+      }
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', JSON.stringify({ kind: 'plan', id: row.id }));
+      el.classList.add('dragging');
     });
+    el.addEventListener('dragend', (e) => {
+      el.classList.remove('dragging');
+      clearDropIndicators();
+      // dropEffect is 'none' when the drag ended somewhere that never accepted it
+      // (dragover never called preventDefault) — i.e. dropped outside the plan list.
+      if (e.dataTransfer.dropEffect === 'none') {
+        cart = cart.filter((c) => c.id !== row.id);
+        setDirty(true);
+        renderPlan(cart);
+      }
+    });
+
+    planRows.appendChild(el);
+  });
 }
 
 // Tile for a plan row linked to a real Master Task List item — mirrors that row's
 // live title/type/status/priority (not a frozen copy) plus scheduling-only fields.
+// All edits here mutate the cart's row object directly and stay local until Save Plan.
 function renderLinkedPlanRow(row, sourceItem) {
   const included = row.include === true || row.include === 'true' || row.include === 'TRUE';
 
   const wrap = document.createElement('div');
   wrap.className = 'plan-row linked' + (included ? '' : ' excluded');
 
+  const handle = document.createElement('span');
+  handle.className = 'drag-handle';
+  handle.textContent = '⠿';
+
   const checkbox = document.createElement('input');
   checkbox.type = 'checkbox';
   checkbox.checked = included;
   checkbox.title = 'Include on Approve';
+  checkbox.addEventListener('change', () => {
+    row.include = checkbox.checked;
+    wrap.classList.toggle('excluded', !checkbox.checked);
+    setDirty(true);
+    flashSaved(wrap);
+  });
 
   const title = document.createElement('div');
   title.className = 'row-title';
@@ -702,6 +854,11 @@ function renderLinkedPlanRow(row, sourceItem) {
   timeInput.className = 'schedule-input';
   timeInput.value = row.start_time || '';
   timeInput.title = 'Start time';
+  timeInput.addEventListener('change', () => {
+    row.start_time = timeInput.value;
+    setDirty(true);
+    flashSaved(wrap);
+  });
 
   const durationInput = document.createElement('input');
   durationInput.type = 'number';
@@ -709,41 +866,24 @@ function renderLinkedPlanRow(row, sourceItem) {
   durationInput.placeholder = 'min';
   durationInput.value = row.duration_minutes || '';
   durationInput.title = 'Duration (minutes)';
+  durationInput.addEventListener('change', () => {
+    row.duration_minutes = durationInput.value;
+    setDirty(true);
+    flashSaved(wrap);
+  });
 
   const deleteBtn = document.createElement('button');
   deleteBtn.type = 'button';
   deleteBtn.className = 'delete-btn';
   deleteBtn.textContent = '✕';
   deleteBtn.title = 'Remove from Today\'s Plan';
-  deleteBtn.addEventListener('click', async () => {
-    lastPlanItems = lastPlanItems.filter((p) => p.id !== row.id);
-    renderPlan(lastPlanItems);
-    await deletePlanRow(row.id);
+  deleteBtn.addEventListener('click', () => {
+    cart = cart.filter((c) => c.id !== row.id);
+    setDirty(true);
+    renderPlan(cart);
   });
 
-  async function saveRow() {
-    const result = await upsertPlanRow({
-      id: row.id,
-      source_item_id: row.source_item_id,
-      title: sourceItem.title,
-      date: row.date,
-      start_time: timeInput.value,
-      duration_minutes: durationInput.value,
-      block_type: row.block_type || 'flexible',
-      include: checkbox.checked,
-      notes: row.notes || '',
-      status: row.status || 'proposed'
-    });
-    if (result.ok) flashSaved(wrap);
-  }
-
-  checkbox.addEventListener('change', () => {
-    wrap.classList.toggle('excluded', !checkbox.checked);
-    saveRow();
-  });
-  timeInput.addEventListener('change', saveRow);
-  durationInput.addEventListener('change', saveRow);
-
+  wrap.appendChild(handle);
   wrap.appendChild(checkbox);
   wrap.appendChild(title);
   wrap.appendChild(pills);
@@ -754,21 +894,28 @@ function renderLinkedPlanRow(row, sourceItem) {
 }
 
 // Fallback for legacy/ad-hoc PendingPlan rows with no matching Master Task List
-// item (e.g. rows created before this change) — keeps the older full-field editor
-// so nothing existing silently breaks.
+// item (e.g. rows created before this change, or a linked task that's since been
+// deleted). Keeps the older full-field editor so nothing existing silently breaks;
+// nothing new is created via this path anymore.
 function renderAdHocPlanRow(row) {
   const included = row.include === true || row.include === 'true' || row.include === 'TRUE';
 
   const wrap = document.createElement('div');
   wrap.className = 'plan-row' + (included ? '' : ' excluded');
 
+  const handle = document.createElement('span');
+  handle.className = 'drag-handle';
+  handle.textContent = '⠿';
+
   const checkbox = document.createElement('input');
   checkbox.type = 'checkbox';
   checkbox.checked = included;
   checkbox.title = 'Include on Approve';
   checkbox.addEventListener('change', () => {
+    row.include = checkbox.checked;
     wrap.classList.toggle('excluded', !checkbox.checked);
-    saveRow();
+    setDirty(true);
+    flashSaved(wrap);
   });
 
   const fields = document.createElement('div');
@@ -783,9 +930,11 @@ function renderAdHocPlanRow(row) {
   notesInput.placeholder = 'Notes / specific next-step';
   notesInput.value = row.notes || '';
 
-  [titleInput, dateInput, timeInput, durationInput, notesInput].forEach((el) => {
-    el.addEventListener('change', saveRow);
-  });
+  titleInput.addEventListener('change', () => { row.title = titleInput.value; setDirty(true); flashSaved(wrap); });
+  dateInput.addEventListener('change', () => { row.date = dateInput.value; setDirty(true); flashSaved(wrap); });
+  timeInput.addEventListener('change', () => { row.start_time = timeInput.value; setDirty(true); flashSaved(wrap); });
+  durationInput.addEventListener('change', () => { row.duration_minutes = durationInput.value; setDirty(true); flashSaved(wrap); });
+  notesInput.addEventListener('change', () => { row.notes = notesInput.value; setDirty(true); flashSaved(wrap); });
 
   fields.appendChild(titleInput);
   fields.appendChild(dateInput);
@@ -798,31 +947,16 @@ function renderAdHocPlanRow(row) {
   deleteBtn.className = 'delete-btn';
   deleteBtn.textContent = '✕';
   deleteBtn.title = 'Delete this block';
-  deleteBtn.addEventListener('click', async () => {
-    await deletePlanRow(row.id);
-    loadAll(secret);
+  deleteBtn.addEventListener('click', () => {
+    cart = cart.filter((c) => c.id !== row.id);
+    setDirty(true);
+    renderPlan(cart);
   });
 
+  wrap.appendChild(handle);
   wrap.appendChild(checkbox);
   wrap.appendChild(fields);
   wrap.appendChild(deleteBtn);
-
-  async function saveRow() {
-    const result = await upsertPlanRow({
-      id: row.id,
-      source_item_id: row.source_item_id || '',
-      title: titleInput.value,
-      date: dateInput.value,
-      start_time: timeInput.value,
-      duration_minutes: durationInput.value,
-      block_type: row.block_type || 'flexible',
-      include: checkbox.checked,
-      notes: notesInput.value,
-      status: row.status || 'proposed'
-    });
-    if (result.ok) flashSaved(wrap);
-  }
-
   return wrap;
 }
 
